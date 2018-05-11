@@ -1,0 +1,128 @@
+# check_s3_health #
+
+Welcome to `check_s3_health`. This is a handy S3 testing tool to expose S3 API
+calls via their boto equivilents.
+
+It includes support for Nagios output, designed to run with minimal
+dependencies. 
+
+Please note that this tool does NOT automatically clean up buckets after
+itself; you must explicitly include cleanup actions if you wish to clean up.
+
+## Basic Usage ##
+
+    check_s3_health.py $COMMON_OPTS --actions=... [--actions=...]
+
+## Common options ##
+
+If you are not in an environment where boto can take implicit credentials, you
+MUST specify the access key and secret key.
+
+    --access-key=... --secret-key=...
+
+You are strongly advised to also include a timeout in your calls, otherwise
+this code will wait forever!
+
+    --timeout=60
+
+## Output options ##
+
+The `--verbose` option will print actions as they take place (except inside
+loops).
+
+The `--nagios` option will make the code use Nagios-style exit codes and
+formatted output. When combined with `--verbose`, the verbose output will be
+formatted for Nagios longdesc.
+
+## Actions ##
+
+Actions are the core of the `check_s3_health` functionality. You must pass one
+or more actions to do things.
+
+There is a special action `HELP`, when used as the ONLY action, it will print a
+usage message as well as all public actions.
+
+All general actions will place their result into a stack if --stack-return
+passed, and this stack can be manipulated and printed by special actions.
+
+There are a number of special actions that affect the state of the tool rather
+than the state of the bucket.
+
+- PRINT.ALL print all items in stack
+- PRINT.LAST print last item in stack
+- TIMER.START start a new timer on top of the stack
+- TIMER.STOP stop the topmost timer in the stack, prints the elapsed time
+- LOOP loop the next action N times
+
+## Examples ##
+
+### Make a bucket and new key, then cleanup ###
+
+    check_s3_health.py $COMMON \
+    --actions=conn.create_bucket \
+    --actions=bucket.new_key \
+    --actions=key.set_contents_from_string \
+    --actions=bucket.delete_all_keys \
+    --actions=bucket.delete
+
+### Upload two files to an existing bucket ###
+
+With existing bucket MY-BUCKET, upload local FILE1 as KEY1 and FILE2 as KEY2.
+
+    check_s3_health.py $COMMON \
+    --bucket-name=MY-BUCKET \
+    --actions=SET.KEY=KEY1 \
+    --actions=key.get_contents_to_filename=FILE1 \
+    --actions=SET.KEY=KEY2 \
+    --actions=key.get_contents_to_filename=FILE2
+
+### Upload a large random file ###
+
+This uploads 1MB of random data to a key then deletes it again; the time elapsed for the upload is printed.
+
+    check_s3_health.py $COMMON \
+    --bucket-name=MY-BUCKET \
+    --actions=bucket.new_key \
+    --actions=SET.FILE.RANDOM=file_size=1048576 \
+    --actions=TIMER.START \
+    --actions=key.set_contents_from_stream \
+    --actions=TIMER.STOP \
+    --actions=key.delete
+
+### Upload a large random file using multipart API ###
+This uploads 12MB of random data to a key using multipart-upload. Remember that
+each part except the last one must be at least 5MiB!
+
+    check_s3_health.py $COMMON \
+    --bucket-name=MY-BUCKET \
+    --actions=bucket.initiate_multipart_upload \
+    --actions=SET.FILE.RANDOM=file_size=$((6*1024*1024)) \
+    --actions=multipartupload.upload_part_from_file=1 \
+    --actions=SET.FILE.RANDOM=file_size=$((5*1024*1024)) \
+    --actions=multipartupload.upload_part_from_file=2 \
+    --actions=SET.FILE.RANDOM=file_size=$((1*1024*1024)) \
+    --actions=multipartupload.upload_part_from_file=3 \
+    --actions=multipartupload.complete_upload
+
+### Upload a large random file using multipart API, out of order ###
+This uploads 6MB of random data to a key using multipart-upload. Remember that
+each part except the last one must be at least 5MiB!
+
+    check_s3_health.py $COMMON \
+    --bucket-name=MY-BUCKET \
+    --actions=bucket.initiate_multipart_upload \
+    --actions=SET.FILE.RANDOM=file_size=$((1*1024*1024)) \
+    --actions=multipartupload.upload_part_from_file=2 \
+    --actions=SET.FILE.RANDOM=file_size=$((5*1024*1024)) \
+    --actions=multipartupload.upload_part_from_file=1 \
+    --actions=multipartupload.complete_upload
+
+### Remove any bucket matching a regex name ###
+If there is no bucket that matches the regex /s3-health-bucket/, then the next
+commands will fail.
+
+    check_s3_health.py $COMMON \
+    --actions=SET.BUCKET.FIND='s3-health-bucket' \
+    --actions=bucket.multidelete_all_keys \
+    --actions=bucket.multidelete_all_versions \
+    --actions=bucket.delete
